@@ -1,0 +1,53 @@
+---
+title: "R Notebook"
+---
+
+```{r setup}
+library(signal)
+library(tuneR)
+library(tidyverse)
+library(gganimate)
+```
+
+```{r}
+tuneR::play(tuneR::sine(freq = 	880.00))
+```
+
+```{r}
+noteFreqTable <- rvest::read_html("https://pages.mtu.edu/~suits/notefreqs.html") %>%
+  rvest::html_elements("body") %>%
+  rvest::html_elements("table") %>%
+  rvest::html_table() %>%
+  .[[2]] %>%
+  set_names(c("Note","freq_Hz","wavelength_cm")) %>%
+  mutate(wavelength_sec = wavelength_cm/100/345) %>%
+  filter(freq_Hz > 125 & freq_Hz < 1000)
+
+save(noteFreqTable,file = "../data/noteFreqTable.RData")
+```
+
+```{r}
+note1Freq <- 440.00
+note2Freq <- 554.37
+note3Freq <- 659.25
+
+note1 <- tuneR::sine(freq = 	note1Freq)
+note2 <- tuneR::sine(freq = 	note2Freq)
+note3 <- tuneR::sine(freq = 	note3Freq)
+
+play(normalize(note1 + note2 + note3))
+
+data.frame(sec = seq(0,1,length.out = note@samp.rate),
+           val = note@left) %>%
+  ggplot(aes(x = sec,y = val)) +
+  geom_line() +
+  xlim(c(NA,.008)) +
+  geom_vline(data = noteFreqTable %>%
+               filter(freq_Hz > 125 & freq_Hz < 1000),
+             aes(xintercept = wavelength_sec)) +
+  geom_point(aes(x = 1/noteFreq,y = 0),size = 2) +
+  labs(x = "Wavelength (sec)",
+       y = "Amplitude") +
+  coord_cartesian(clip = "off") +
+  theme_minimal()
+```
