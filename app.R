@@ -11,35 +11,74 @@ library(shiny)
 library(shinyWidgets)
 library(tuneR)
 library(tidyverse)
+library(ggiraph)
 
+# clear out www folder in case it still has mp3s in it
+if(!dir.exists("www")){
+  dir.create("www")
+}
+file.remove(list.files(path = "www",pattern = "note[0-9].mp3",full.names = TRUE))
+file.remove(list.files(path = "www",pattern = "chord[0-9].mp3",full.names = TRUE))
+file.remove(list.files(path = "www",pattern = "song.mp3",full.names = TRUE))
 
 load("data/noteFreqTable.RData")
+load("data/pianoKeyPlotData.RData")
+load("data/pianoKeyPolygonData.RData")
 source("code/helperFunctions.R")
 
 noteFreqTable <- noteFreqTable %>%
-  mutate(Note = str_extract(Note,"[A-Z][#]?[0-9]")) %>%
-  mutate(noteLabel = Note)
+  # mutate(Note = str_extract(Note,"[A-Z][#]?[0-9]")) %>%
+  mutate(noteLabel = ifelse(str_detect(Note,"/"),
+                            Note %>%
+                              str_split("/") %>%
+                              map_chr(~ paste0(.[2],"/",.[1])) %>%
+                              str_remove("[0-9]"),
+                            Note))
+
+# save this to global environment so that it can be reset after finishing a chord
+pianoKeyPlot <-
+  pianoKeyPolygonData %>%
+  ggplot() +
+  geom_polygon_interactive(aes(x=x,y=y,
+                               group = noteOctave,data_id = noteOctave,fill = key),
+                           colour = "black") +
+  geom_text(data = pianoKeyPlotData %>%
+              group_by(noteOctave,key) %>%
+              summarise(x = mean(c(xmin,xmax)),
+                        y = ifelse(str_detect(noteOctave,"b"),.35,.05)),
+            aes(x = x,y = y,label = noteOctave,colour = key),
+            size = 2) +
+  scale_fill_manual(values = c("black","white")) +
+  scale_colour_manual(values = c("white","black")) +
+  # coord_fixed(ratio = 50,expand = FALSE) +
+  theme_void() +
+  theme(legend.position = "none")
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
   tags$style(type='text/css', ".irs-grid-text { font-size: 7pt; }"),
   shinyjs::useShinyjs(),
-  column(width = 6,
-         selectInput(inputId = "waveType",label = "Wave Type",choices = c("sine","pulse")),#,"square","sawtooth")),
-         actionButton(inputId = "nextChord",label = "Next Chord"),
-         uiOutput(outputId = "noteSelection"),
-         actionButton(inputId = "addNote",label = "Add a note")
-  ),
-  column(width = 6,
-         uiOutput(outputId = "chordPlay"),
-         plotOutput(outputId = "chordPlot"),
-         plotOutput(outputId = "chordSpect")),
+  fluidRow(column(width = 12,ggiraph::ggiraphOutput(outputId = "pianoKeys",width = "100%",height = "500px"))),
+  splitLayout(selectInput(inputId = "waveType",label = "Wave Type",choices = c("sine","pulse")),
+              numericInput(inputId = "chordDuration",label = "Duration (sec)",value = 1,min = 0),
+              actionButton(inputId = "nextChord",label = "Next Chord"),
+              cellWidths = c("10%","10%","10%")),
+  br(),
+  fluidRow(column(width = 4,
+                  uiOutput(outputId = "chordPlay"),
+         uiOutput(outputId = "noteSelection")),
+  column(width = 8,
+         plotOutput(outputId = "chordPlot")
+         # ,plotOutput(outputId = "chordSpect")
+         )),
+  br(),
   fluidRow(
     div(id = "songUI",
         uiOutput(outputId = "songPlay"),
         downloadButton(outputId = "songExport",label = "Export Song"),
-        plotOutput(outputId = "songWaveform"),
-        plotOutput(outputId = "songSpect"))
+        # plotOutput(outputId = "songWaveform")
+        plotOutput(outputId = "songSpect")
+        )
     )
 
 )
@@ -47,82 +86,65 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(session,input, output){
 
-  # this will be reactive so that the dependent UI will update when it changes
-  noteCount <- reactiveVal(value = 0)
-  # we also keep a static version of the count so that we can access it
-  # outside of a reactive environment (see the for loop below)
+  output$pianoKeys <- renderGirafe({
 
-  # the user will add one or more notes to play simultaneously
-  observeEvent(input$addNote,{
-
-    noteCount(noteCount() + 1)
-
-    # for each note, we render a slider input to select a specific note on the
-    # western chromatic scale.
-    output$noteSelection <- renderUI({
-
-      noteSelectionList <-
-        map(#1:
-          noteCount(),
-          function(ind){
-
-            return(tags$div(
-              br(),
-              id = paste0("note",ind,"ui"),
-              sliderTextInput(inputId = paste0("note",ind),
-                              label = "Choose a note",
-                              choices = noteFreqTable$Note,
-                              selected = "C4",
-                              grid = TRUE,
-                              force_edges = TRUE,
-                              width = "100%"),
-              # plotOutput(paste0("note",ind,"WavePlot")),
-              uiOutput(outputId = paste0("note",ind,"Player"))
-            ))
-
-            # uiOutput(outputId = uiInd)
-
-          })
-
-      # we keep track of the list of note selections in
-      # the global environment
-      if(exists("noteSelections")){
-
-        noteSelections <<- c(noteSelections,noteSelectionList)
-
-      }
-      else{
-
-        noteSelections <<- noteSelectionList
-
-      }
-
-      return(tagList(noteSelections))
-
-    })
+    return(ggiraph::girafe(ggobj = pianoKeyPlot,
+                    options = list(opts_selection(type = "multiple",
+                                                  css = "fill:red;stroke:black")),
+                    width_svg = 10,
+                    height_svg = 2))
 
   })
 
-  #
+  output$noteSelection <- renderUI({
+
+    req(length(input$pianoKeys_selected) > 0)
+
+    selectedNotes <- input$pianoKeys_selected
+
+    ret <- map2(selectedNotes,
+        1:length(selectedNotes),
+        function(note,ind){
+
+          return(tags$div(
+            br(),
+            id = paste0("note",ind,"ui"),
+            h5(paste0("Listen to ",note,":")),
+            uiOutput(outputId = paste0("note",ind,"Player"))
+          ))
+
+        })
+
+    return(tagList(ret))
+
+
+  })
+
   numChords <- 1
 
-  # we limit the total number of possible notes per chord to 5. the code below
-  # creates a
-  observeEvent(list(input$note1,input$note2,input$note3,input$note4,input$note5,input$waveType),{
+  observeEvent(list(input$pianoKeys_selected,input$waveType,input$chordDuration),{
 
-    req(noteCount() > 0)
+    req(length(input$pianoKeys_selected) > 0)
 
-    map(1:noteCount(),
-        function(ind){
+    #clear out the www folder each time we add a new note -- this ensures that
+    #the user can remove a note from a chord and it will be removed from the UI
+    file.remove(list.files(path = "www",pattern = "note[0-9].mp3",full.names = TRUE))
+    file.remove(list.files(path = "www",pattern = paste0("chord[0-9].mp3"),full.names = TRUE))
+
+    # save individual note mp3s
+    map2(input$pianoKeys_selected,
+        1:length(input$pianoKeys_selected),
+        function(note,ind){
 
           # pull the frequency information from the selected note
           selectedNoteFreq <- noteFreqTable %>%
-            filter(noteLabel == input[[paste0("note",ind)]]) %>%
+            filter(noteLabel == note) %>%
             pull(freq_Hz)
 
           # create a signal of a specific wave type
           noteWave <- periodicSignal(waveType = input$waveType,
-                                     frequency = selectedNoteFreq)
+                                     frequency = selectedNoteFreq,
+                                     duration = round(input$chordDuration*44100))
 
           filename <- paste0("www/note",ind,".mp3")
 
@@ -157,9 +179,11 @@ server <- function(session,input, output){
 
       tuneR::writeWave(normalize(combinedAudio),filename = paste0("www/chord",numChords,".mp3"))
 
-      return(tags$audio(controls = TRUE,
+      return(tags$div(
+        tags$h5("Listen to full chord:"),
+        tags$audio(controls = TRUE,
                         tags$source(src = paste0("chord",numChords,".mp3")),
-                        title = "Listen to chord"))
+                        title = "Listen to chord")))
 
     })
 
@@ -170,12 +194,12 @@ server <- function(session,input, output){
                 ~ {
 
                   data.frame(val = .@left,
-                             sec = seq(0,1,length.out = combinedAudio@samp.rate))
+                             sec = seq(1/combinedAudio@samp.rate,input$chordDuration,by = 1/combinedAudio@samp.rate))
 
                 })
 
       data.frame(val = combinedAudio@left,
-                 sec = seq(0,1,length.out = combinedAudio@samp.rate)) %>%
+                 sec = seq(1/combinedAudio@samp.rate,input$chordDuration,by = 1/combinedAudio@samp.rate)) %>%
         ggplot(aes(x = sec,y = val)) +
         geom_line(size = 1.5) +
         geom_line(data = individualWaves,
@@ -188,47 +212,31 @@ server <- function(session,input, output){
 
     })
 
-    output$chordSpect <- renderPlot({
-
-      spec <- signal::specgram(combinedAudio@left)
-
-      expand_grid(tim = spec$t,f = spec$f) %>%
-        mutate(S = abs(c(spec$S))) %>%
-        mutate(S = 10*log10(S/max(S)),
-               tim = 2*tim/combinedAudio@samp.rate) %>%
-        ggplot(aes(x=tim,y=f,fill = S)) +
-        geom_raster() +
-        scale_fill_gradient(low = "purple",high = "orange") +
-        theme_minimal() +
-        theme(panel.grid = element_blank()) +
-        labs(x = "Time (sec)",
-             y = "Frequency",
-             title = "Chord Spectrogram") +
-        coord_cartesian(expand = FALSE)
-
-    })
-  })
-
-  # we limit the nubmer of notes per chord to 5
-  observe({
-
-    if(noteCount() == 5){
-
-      shinyjs::hideElement("addNote")
-
-    }
-    else{
-
-      shinyjs::showElement("addNote")
-
-    }
-
+    # output$chordSpect <- renderPlot({
+    #
+    #   spec <- signal::specgram(combinedAudio@left)
+    #
+    #   expand_grid(tim = spec$t,f = spec$f) %>%
+    #     mutate(S = abs(c(spec$S))) %>%
+    #     mutate(S = 10*log10(S/max(S)),
+    #            tim = 2*tim/combinedAudio@samp.rate) %>%
+    #     ggplot(aes(x=tim,y=f,fill = S)) +
+    #     geom_raster() +
+    #     scale_fill_gradient(low = "purple",high = "orange") +
+    #     theme_minimal() +
+    #     theme(panel.grid = element_blank()) +
+    #     labs(x = "Time (sec)",
+    #          y = "Frequency",
+    #          title = "Chord Spectrogram") +
+    #     coord_cartesian(expand = FALSE)
+    #
+    # })
   })
 
   # the user can only move on to the next chord if they have at least one note
   observe({
 
-    if(noteCount() == 0){
+    if(length(input$pianoKeys_selected) == 0){
 
       shinyjs::hideElement(id = "nextChord")
 
@@ -262,17 +270,18 @@ server <- function(session,input, output){
       song <- tuneR::readWave(paste0("www/song.mp3"))
 
       tuneR::writeWave(object = tuneR::bind(song,chord),filename = "www/song.mp3")
+      # also save the song to the data folder since there's a lot of exhanging of files going on in www
+      tuneR::writeWave(object = tuneR::bind(song,chord),filename = "data/song.mp3")
 
     }
     else{
 
       tuneR::writeWave(object = chord,filename = "www/song.mp3")
+      tuneR::writeWave(object = chord,filename = "data/song.mp3")
 
       song <- chord
 
     }
-
-    # browser()
 
     numChords <<- numChords + 1
 
@@ -296,29 +305,12 @@ server <- function(session,input, output){
       },
       content = function(file){
 
-        ret <- tuneR::readWave("www/song.mp3")
+        ret <- tuneR::readWave("data/song.mp3")
 
         tuneR::writeWave(ret,file)
 
       }
     )
-
-    browser()
-
-    output$songPlot <- renderPlot({
-
-      ret <- data.frame(val = song@left,
-                 sec = seq(0,1,length.out = song@samp.rate)) %>%
-        ggplot(aes(x = sec,y = val)) +
-        geom_line(size = 1.5) +
-        labs(x = "Wavelength (sec)",
-             y = "Amplitude",
-             title = "Song Waveform") +
-        theme_minimal()
-
-      return(ret)
-
-    })
 
     output$songSpect <- renderPlot({
 
@@ -341,12 +333,21 @@ server <- function(session,input, output){
     })
 
     # reset the note and chord UI to start a new chord
-    rm(noteSelections,envir = .GlobalEnv)
-    output$noteSelection <- NULL
+    # output$noteSelection <- NULL
+    shinyjs::reset(id = "noteSelection")
     output$chordPlay <- NULL
     output$chordPlot <- NULL
     output$chordSpect <- NULL
-    noteCount(0)
+    output$pianoKeys <- NULL
+    output$pianoKeys <- renderGirafe({
+
+      return(ggiraph::girafe(ggobj = pianoKeyPlot,
+                             options = list(opts_selection(type = "multiple",
+                                                           css = "fill:red;stroke:black")),
+                             width_svg = 10,
+                             height_svg = 2))
+
+    })
 
   })
 
@@ -363,6 +364,7 @@ server <- function(session,input, output){
     file.remove(list.files(path = "www",pattern = "note[0-9].mp3",full.names = TRUE))
     file.remove(list.files(path = "www",pattern = "chord[0-9].mp3",full.names = TRUE))
     file.remove(list.files(path = "www",pattern = "song.mp3",full.names = TRUE))
+    file.remove(list.files(path = "data",pattern = "song.mp3",full.names = TRUE))
   })
 
 }

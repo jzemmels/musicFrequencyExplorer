@@ -20,8 +20,8 @@ noteFreqTable <- rvest::read_html("https://pages.mtu.edu/~suits/notefreqs.html")
   rvest::html_table() %>%
   .[[2]] %>%
   set_names(c("Note","freq_Hz","wavelength_cm")) %>%
-  mutate(wavelength_sec = wavelength_cm/100/345) %>%
-  filter(freq_Hz > 125 & freq_Hz < 1000)
+  mutate(wavelength_sec = wavelength_cm/100/345)# %>%
+  # filter(freq_Hz > 125 & freq_Hz < 1000)
 
 save(noteFreqTable,file = "../data/noteFreqTable.RData")
 ```
@@ -51,3 +51,107 @@ data.frame(sec = seq(0,1,length.out = note@samp.rate),
   coord_cartesian(clip = "off") +
   theme_minimal()
 ```
+
+```{r}
+whiteKeys <- data.frame(xmin = seq(0,510,by = 10),
+                        xmax = seq(10,520,by = 10)) %>%
+  mutate(note = c("A","B",rep(c("C","D","E","F","G","A","B"),times = 7),"C"),
+         octave = rep(0:8,times = c(2,rep(7,times = 7),1)),
+         key = "white",
+         ymin = 0,
+         ymax = 1,
+         noteOctave = paste0(note,octave))
+
+blackKeys <- data.frame(note = c("Bb/A#",rep(c("Db/C#","Eb/D#","Gb/F#","Ab/G#","Bb/A#"),times = 7)),
+                        xmin = c(6.66,c(26.66,36.66,56.66,66.66,76.66) + 70*rep(0:6,each = 5))) %>%
+  mutate(xmax = xmin + 6.66,
+         octave = c(0,rep(1:7,each = 5)),
+         key = "black",
+         ymin = .25,
+         ymax = 1,
+         noteOctave = paste0(str_replace(note,"/","\n"),"\n",octave))
+
+pianoKeyPlotData <- bind_rows(whiteKeys,blackKeys)
+
+pianoKeyPlotData
+
+save(pianoKeyPlotData,file = "../data/pianoKeyPlotData.RData")
+```
+
+```{r}
+keyPolygon <- function(note,octave,type,translation){
+  
+  if(type == "left"){
+    
+    return(data.frame(x = translation + c(0,0,6.66,6.66,10,10),
+                      y = c(0,1,1,.25,.25,0)) %>%
+             mutate(note = note,
+                    octave = octave,
+             noteOctave = paste0(note,octave),
+             key = "white"))
+    
+  }
+  if(type == "right"){
+    
+    return(data.frame(x = translation - c(0,0,6.66,6.66,10,10),
+               y = c(0,1,1,.25,.25,0)) %>%
+      mutate(note = note,
+             octave = octave,
+             noteOctave = paste0(note,octave),
+             key = "white"))
+    
+  }
+  if(type == "both"){
+    
+    return(data.frame(x = translation + c(0,0,3.33,3.33,6.66,6.66,10,10),
+           y = c(0,.25,.25,1,1,.25,.25,0)) %>%
+      mutate(note = note,
+             octave = octave,
+             noteOctave = paste0(note,octave),
+             key = "white"))
+    
+  }
+  if(type == "none"){
+    
+    return(data.frame(x = translation + c(0,0,10,10),
+               y = c(0,1,1,0)) %>%
+      mutate(note = note,
+             octave = octave,
+             noteOctave = paste0(note,octave),
+             key = "white"))
+    
+  }
+  if(type == "black"){
+    
+    return(data.frame(x = translation + c(0,0,6.66,6.66),
+           y = c(.25,1,1,.25)) %>%
+      mutate(note = note,
+             octave = octave,
+             noteOctave = paste0(note,octave),
+             key = "black"))
+    
+    
+  }
+  
+}
+
+pianoKeyPolygonData <- pmap_dfr(.l = 
+          list(notes = c("A","B",rep(c("C","D","E","F","G","A","B"),times = 7),"C",
+                        c("Bb/A#",rep(c("Db/C#","Eb/D#","Gb/F#","Ab/G#","Bb/A#"),times = 7))),
+               octaves = c(0,0,rep(1:7,each = 7),8,
+                           0,rep(1:7,each = 5)),
+               types = c("left",rep(c("right","left","both","right","left","both","both"),times = 7),"right","none",
+                         rep("black",times = 36)),
+               translations = c(0,
+                                c(20,20,30,50,50,60,70) + 70*rep(0:6,each = 7),
+                                510,510,
+                                6.66,c(26.66,36.66,56.66,66.66,76.66) + 70*rep(0:6,each = 5))),
+        ~{
+          
+          keyPolygon(note = ..1,octave = ..2,type = ..3,translation = ..4)
+          
+        }) 
+
+save(pianoKeyPolygonData,file = "../data/pianoKeyPolygonData.RData")
+```
+

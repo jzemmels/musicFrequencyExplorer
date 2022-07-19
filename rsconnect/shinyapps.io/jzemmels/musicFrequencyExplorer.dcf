@@ -1,0 +1,14 @@
+name: musicFrequencyExplorer
+title: musicFrequencyExplorer
+username:
+account: jzemmels
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 6645578
+bundleId: 6101761
+url: https://jzemmels.shinyapps.io/musicFrequencyExplorer/
+when: 1657903403.38365
+lastSyncTime: 1657903403.38365
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: code/noteExploration.Rmd|www/chord10.mp3
